@@ -324,7 +324,7 @@ pub mod rpc {
     }
 
     impl RpcClient {
-        pub fn remote(endpoint: Endpoint, id: Id) -> std::result::Result<Self, SignatureError> {
+        pub fn remote(endpoint: Endpoint, id: Id) -> std::result::Result<Self, Box<dyn std::error::Error + Send + Sync>> {
             let id = iroh::EndpointId::from_bytes(&id)?;
             let client = irpc_iroh::client(endpoint, id, ALPN);
             Ok(Self::new(client))
@@ -569,7 +569,10 @@ pub mod api {
             self.0
                 .upgrade()
                 .map(ApiClient)
-                .ok_or(irpc::Error::Send(irpc::channel::SendError::ReceiverClosed))
+                .ok_or(irpc::Error::Send {
+                    source: irpc::channel::SendError::ReceiverClosed { meta: Default::default() },
+                    meta: Default::default(),
+                })
         }
 
         pub async fn nodes_dead(&self, ids: &[EndpointId]) -> irpc::Result<()> {
@@ -1175,11 +1178,17 @@ pub mod pool {
                 Ok((send, recv))
             })
         }
+
+        fn zero_rtt_accepted(
+            &self,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'static>> {
+            Box::pin(std::future::ready(false))
+        }
     }
 
     impl ClientPool for IrohPool {
         fn id(&self) -> EndpointId {
-            self.endpoint.endpoint_id()
+            self.endpoint.id()
         }
 
         fn node_addr(&self, endpoint_id: EndpointId) -> EndpointAddr {
@@ -1193,15 +1202,19 @@ pub mod pool {
         fn add_node_addr(&self, addr: EndpointAddr) {
             // don't add self info.
             // this should not happen, but just in case
-            if addr.endpoint_id == self.id() {
+            if addr.id == self.id() {
                 return;
             }
             // don't add useless info.
-            if addr.relay_url.is_none() && addr.direct_addresses.is_empty() {
+            if addr.addrs.is_empty() {
                 return;
             }
-            // this can still fail, for the reason AddEndpointAddrError::EmptyPruned ¯\_(ツ)_/¯
-            self.endpoint.add_node_addr_with_source(addr, "").ok();
+            // Add the address info via the address lookup provider.
+            if let Ok(lookup) = self.endpoint.address_lookup() {
+                let mem = iroh::address_lookup::MemoryLookup::new();
+                mem.add_endpoint_info(addr);
+                lookup.add(mem);
+            }
         }
 
         async fn client(&self, endpoint_id: EndpointId) -> Result<RpcClient, String> {
@@ -1793,7 +1806,7 @@ impl<P: ClientPool> State<P> {
         }
         let infos = infos?;
         drop(client);
-        let ids = infos.iter().map(|info| info.endpoint_id).collect();
+        let ids = infos.iter().map(|info| info.id).collect();
         for info in infos {
             self.pool.add_node_addr(info);
         }
