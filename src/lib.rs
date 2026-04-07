@@ -75,7 +75,7 @@ use std::{
 
 use futures_buffered::FuturesUnordered;
 use indexmap::IndexSet;
-use iroh::NodeId;
+use iroh::EndpointId;
 use irpc::{
     LocalSender,
     channel::{mpsc, oneshot},
@@ -105,7 +105,7 @@ pub mod rpc {
         sync::{Arc, Weak},
     };
 
-    use iroh::{Endpoint, NodeAddr, NodeId, PublicKey};
+    use iroh::{Endpoint, EndpointAddr, EndpointId, PublicKey};
     use iroh_base::SignatureError;
     use irpc::{
         channel::{mpsc, oneshot},
@@ -123,7 +123,7 @@ pub mod rpc {
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct Blake3Provider {
         timestamp: u64, // Unix timestamp for expiry
-        node_id: [u8; 32],
+        endpoint_id: [u8; 32],
     }
 
     /// Small immutable value.
@@ -229,7 +229,7 @@ pub mod rpc {
             Id(hash.into())
         }
 
-        pub fn node_id(id: iroh::NodeId) -> Self {
+        pub fn endpoint_id(id: iroh::EndpointId) -> Self {
             Id::from(*id.as_bytes())
         }
     }
@@ -288,7 +288,7 @@ pub mod rpc {
         ///
         /// For the irpc memory or quinn transport, you have to just believe this value.
         /// For the irpc iroh transport, this must be the node ID of the requester.
-        pub requester: Option<NodeId>,
+        pub requester: Option<EndpointId>,
     }
 
     /// Protocol for rpc communication.
@@ -307,7 +307,7 @@ pub mod rpc {
         #[rpc(tx = mpsc::Sender<Value>)]
         GetAll(GetAll),
         /// A request to query the routing table for the most natural locations
-        #[rpc(tx = oneshot::Sender<Vec<NodeAddr>>)]
+        #[rpc(tx = oneshot::Sender<Vec<EndpointAddr>>)]
         FindNode(FindNode),
     }
 
@@ -325,7 +325,7 @@ pub mod rpc {
 
     impl RpcClient {
         pub fn remote(endpoint: Endpoint, id: Id) -> std::result::Result<Self, SignatureError> {
-            let id = iroh::NodeId::from_bytes(&id)?;
+            let id = iroh::EndpointId::from_bytes(&id)?;
             let client = irpc_iroh::client(endpoint, id, ALPN);
             Ok(Self::new(client))
         }
@@ -353,8 +353,8 @@ pub mod rpc {
         pub async fn find_node(
             &self,
             id: Id,
-            requester: Option<NodeId>,
-        ) -> irpc::Result<Vec<NodeAddr>> {
+            requester: Option<EndpointId>,
+        ) -> irpc::Result<Vec<EndpointAddr>> {
             self.0.rpc(FindNode { id, requester }).await
         }
 
@@ -380,7 +380,7 @@ pub mod api {
         time::Duration,
     };
 
-    use iroh::NodeId;
+    use iroh::EndpointId;
     use irpc::{
         channel::{mpsc, none::NoSender, oneshot},
         rpc_requests,
@@ -399,22 +399,22 @@ pub mod api {
         /// to provide AddrInfo here since the routing table does not store it.
         #[rpc(tx = NoSender)]
         #[wrap(NodesSeen)]
-        NodesSeen { ids: Vec<NodeId> },
+        NodesSeen { ids: Vec<EndpointId> },
         /// NodesDead can only be called for node ids, but we don't bother
         /// to provide AddrInfo here since the routing table does not store it.
         #[rpc(tx = NoSender)]
         #[wrap(NodesDead)]
-        NodesDead { ids: Vec<NodeId> },
-        #[rpc(tx = oneshot::Sender<Vec<NodeId>>)]
+        NodesDead { ids: Vec<EndpointId> },
+        #[rpc(tx = oneshot::Sender<Vec<EndpointId>>)]
         #[wrap(Lookup)]
         Lookup {
-            initial: Option<Vec<NodeId>>,
+            initial: Option<Vec<EndpointId>>,
             id: Id,
         },
-        #[rpc(tx = mpsc::Sender<NodeId>)]
+        #[rpc(tx = mpsc::Sender<EndpointId>)]
         #[wrap(NetworkPut)]
         NetworkPut { id: Id, value: Value },
-        #[rpc(tx = mpsc::Sender<(NodeId, Value)>)]
+        #[rpc(tx = mpsc::Sender<(EndpointId, Value)>)]
         #[wrap(NetworkGet)]
         NetworkGet {
             id: Id,
@@ -423,7 +423,7 @@ pub mod api {
             n: Option<NonZeroU64>,
         },
         /// Get the routing table for testing
-        #[rpc(tx = oneshot::Sender<Vec<Vec<NodeId>>>)]
+        #[rpc(tx = oneshot::Sender<Vec<Vec<EndpointId>>>)]
         #[wrap(GetRoutingTable)]
         GetRoutingTable,
         /// Get storage stats for testing
@@ -451,14 +451,14 @@ pub mod api {
         /// notify the node that we have just seen these nodes.
         ///
         /// The impl should add these nodes to the routing table.
-        pub async fn nodes_seen(&self, ids: &[NodeId]) -> irpc::Result<()> {
+        pub async fn nodes_seen(&self, ids: &[EndpointId]) -> irpc::Result<()> {
             self.0.notify(NodesSeen { ids: ids.to_vec() }).await
         }
 
         /// notify the node that we have tried to contact these nodes and have not gotten a response.
         ///
         /// The impl can either clean these nodes from its routing table immediately or after a repeat offense.
-        pub async fn nodes_dead(&self, ids: &[NodeId]) -> irpc::Result<()> {
+        pub async fn nodes_dead(&self, ids: &[EndpointId]) -> irpc::Result<()> {
             self.0.notify(NodesDead { ids: ids.to_vec() }).await
         }
 
@@ -466,15 +466,15 @@ pub mod api {
             self.0.rpc(GetStorageStats).await
         }
 
-        pub async fn get_routing_table(&self) -> irpc::Result<Vec<Vec<NodeId>>> {
+        pub async fn get_routing_table(&self) -> irpc::Result<Vec<Vec<EndpointId>>> {
             self.0.rpc(GetRoutingTable).await
         }
 
         pub async fn lookup(
             &self,
             id: Id,
-            initial: Option<Vec<NodeId>>,
-        ) -> irpc::Result<Vec<NodeId>> {
+            initial: Option<Vec<EndpointId>>,
+        ) -> irpc::Result<Vec<EndpointId>> {
             self.0.rpc(Lookup { id, initial }).await
         }
 
@@ -517,7 +517,7 @@ pub mod api {
         pub async fn put_immutable(
             &self,
             value: &[u8],
-        ) -> irpc::Result<(blake3::Hash, Vec<NodeId>)> {
+        ) -> irpc::Result<(blake3::Hash, Vec<EndpointId>)> {
             let hash = blake3::hash(value);
             let id = Id::from(*hash.as_bytes());
             let mut rx = self
@@ -572,11 +572,11 @@ pub mod api {
                 .ok_or(irpc::Error::Send(irpc::channel::SendError::ReceiverClosed))
         }
 
-        pub async fn nodes_dead(&self, ids: &[NodeId]) -> irpc::Result<()> {
+        pub async fn nodes_dead(&self, ids: &[EndpointId]) -> irpc::Result<()> {
             self.upgrade()?.nodes_dead(ids).await
         }
 
-        pub async fn nodes_seen(&self, ids: &[NodeId]) -> irpc::Result<()> {
+        pub async fn nodes_seen(&self, ids: &[EndpointId]) -> irpc::Result<()> {
             self.upgrade()?.nodes_seen(ids).await
         }
 
@@ -621,7 +621,7 @@ mod routing {
     };
 
     use arrayvec::ArrayVec;
-    use iroh::NodeId;
+    use iroh::EndpointId;
 
     use super::rpc::Id;
 
@@ -680,7 +680,7 @@ mod routing {
 
     #[derive(Debug, Clone, Default)]
     pub struct KBucket {
-        nodes: ArrayVec<NodeId, K>,
+        nodes: ArrayVec<EndpointId, K>,
     }
 
     impl KBucket {
@@ -694,7 +694,7 @@ mod routing {
             }
         }
 
-        pub fn add_node(&mut self, node: NodeId) -> bool {
+        pub fn add_node(&mut self, node: EndpointId) -> bool {
             // Check if node already exists and update it
             for existing in &mut self.nodes {
                 if existing == &node {
@@ -711,11 +711,11 @@ mod routing {
             false // Bucket full
         }
 
-        fn remove_node(&mut self, id: &NodeId) {
+        fn remove_node(&mut self, id: &EndpointId) {
             self.nodes.retain(|n| n != id);
         }
 
-        pub fn nodes(&self) -> &[NodeId] {
+        pub fn nodes(&self) -> &[EndpointId] {
             &self.nodes
         }
     }
@@ -723,7 +723,7 @@ mod routing {
     #[derive(Debug)]
     pub struct RoutingTable {
         pub buckets: Buckets,
-        pub local_id: NodeId,
+        pub local_id: EndpointId,
     }
 
     #[derive(Debug, Clone, Default)]
@@ -761,7 +761,7 @@ mod routing {
     }
 
     impl RoutingTable {
-        pub fn new(local_id: NodeId, buckets: Option<Buckets>) -> Self {
+        pub fn new(local_id: EndpointId, buckets: Option<Buckets>) -> Self {
             let buckets = buckets
                 .map(|mut buckets| {
                     for bucket in buckets.0.iter_mut() {
@@ -793,7 +793,7 @@ mod routing {
             }
         }
 
-        pub(crate) fn contains(&self, id: &NodeId) -> bool {
+        pub(crate) fn contains(&self, id: &EndpointId) -> bool {
             let Some(bucket_idx) = self.bucket_index(id.as_bytes()) else {
                 return false;
             };
@@ -803,25 +803,25 @@ mod routing {
                 .any(|node| node == id)
         }
 
-        pub fn add_node(&mut self, node: NodeId) -> bool {
+        pub fn add_node(&mut self, node: EndpointId) -> bool {
             let Some(bucket_idx) = self.bucket_index(node.as_bytes()) else {
                 return false;
             };
             self.buckets[bucket_idx].add_node(node)
         }
 
-        pub(crate) fn remove_node(&mut self, id: &NodeId) {
+        pub(crate) fn remove_node(&mut self, id: &EndpointId) {
             let Some(bucket_idx) = self.bucket_index(id.as_bytes()) else {
                 return;
             };
             self.buckets[bucket_idx].remove_node(id);
         }
 
-        pub fn nodes(&self) -> impl Iterator<Item = &NodeId> {
+        pub fn nodes(&self) -> impl Iterator<Item = &EndpointId> {
             self.buckets.iter().flat_map(|bucket| bucket.nodes())
         }
 
-        pub fn find_closest_nodes(&self, target: &Id, k: usize) -> Vec<NodeId> {
+        pub fn find_closest_nodes(&self, target: &Id, k: usize) -> Vec<EndpointId> {
             // this does a brute force scan, but even so it should be very fast.
             // xor is basically free, and comparing distances as well.
             // so the most expensive thing is probably the memory allocation.
@@ -841,7 +841,7 @@ mod routing {
             candidates
                 .into_iter()
                 .map(|dist| {
-                    NodeId::from_bytes(&dist.inverse(target))
+                    EndpointId::from_bytes(&dist.inverse(target))
                         .expect("inverse called with different target than between")
                 })
                 .collect()
@@ -871,7 +871,7 @@ struct Node {
 }
 
 impl Node {
-    fn id(&self) -> &NodeId {
+    fn id(&self) -> &EndpointId {
         &self.routing_table.local_id
     }
 }
@@ -1083,7 +1083,7 @@ pub mod pool {
     use std::sync::{Arc, RwLock};
 
     use iroh::{
-        Endpoint, NodeAddr, NodeId,
+        Endpoint, EndpointAddr, EndpointId,
         endpoint::{RecvStream, SendStream},
     };
     use iroh_blobs::util::connection_pool::{ConnectionPool, ConnectionRef};
@@ -1099,25 +1099,25 @@ pub mod pool {
     /// wrap an iroh Endpoint and have some sort of connection cache.
     pub trait ClientPool: Send + Sync + Clone + Sized + 'static {
         /// Our own node id
-        fn id(&self) -> NodeId;
+        fn id(&self) -> EndpointId;
 
         /// Adds dialing info to a node id.
         ///
         /// The default impl doesn't add anything.
-        fn node_addr(&self, node_id: NodeId) -> NodeAddr {
-            node_id.into()
+        fn node_addr(&self, endpoint_id: EndpointId) -> EndpointAddr {
+            endpoint_id.into()
         }
 
         /// Adds dialing info for a node id.
         ///
         /// The default impl doesn't add anything.
-        fn add_node_addr(&self, _addr: NodeAddr) {}
+        fn add_node_addr(&self, _addr: EndpointAddr) {}
 
         /// Use the client to perform an operation.
         ///
         /// You must not clone the client out of the closure. If you do, this client
         /// can become unusable at any time!
-        fn client(&self, id: NodeId) -> impl Future<Output = Result<RpcClient, String>> + Send;
+        fn client(&self, id: EndpointId) -> impl Future<Output = Result<RpcClient, String>> + Send;
     }
 
     /// Error when a pool can not obtain a client.
@@ -1178,34 +1178,34 @@ pub mod pool {
     }
 
     impl ClientPool for IrohPool {
-        fn id(&self) -> NodeId {
-            self.endpoint.node_id()
+        fn id(&self) -> EndpointId {
+            self.endpoint.endpoint_id()
         }
 
-        fn node_addr(&self, node_id: NodeId) -> NodeAddr {
+        fn node_addr(&self, endpoint_id: EndpointId) -> EndpointAddr {
             // TODO: we need to get the info from the endpoint somehow, but as
             // 0.93.0 it is no longer possible.
             //
             // See https://github.com/n0-computer/iroh/issues/3521
-            node_id.into()
+            endpoint_id.into()
         }
 
-        fn add_node_addr(&self, addr: NodeAddr) {
+        fn add_node_addr(&self, addr: EndpointAddr) {
             // don't add self info.
             // this should not happen, but just in case
-            if addr.node_id == self.id() {
+            if addr.endpoint_id == self.id() {
                 return;
             }
             // don't add useless info.
             if addr.relay_url.is_none() && addr.direct_addresses.is_empty() {
                 return;
             }
-            // this can still fail, for the reason AddNodeAddrError::EmptyPruned ¯\_(ツ)_/¯
+            // this can still fail, for the reason AddEndpointAddrError::EmptyPruned ¯\_(ツ)_/¯
             self.endpoint.add_node_addr_with_source(addr, "").ok();
         }
 
-        async fn client(&self, node_id: NodeId) -> Result<RpcClient, String> {
-            if node_id == self.id() {
+        async fn client(&self, endpoint_id: EndpointId) -> Result<RpcClient, String> {
+            if endpoint_id == self.id() {
                 // If we are trying to connect to ourselves, return the self client if available.
                 if let Some(client) = self.self_client.read().unwrap().clone() {
                     return client
@@ -1218,7 +1218,7 @@ pub mod pool {
             }
             let connection = self
                 .inner
-                .get_or_connect(node_id)
+                .get_or_connect(endpoint_id)
                 .await
                 .map_err(|e| format!("Failed to connect: {e}"));
             let connection = connection?;
@@ -1240,7 +1240,7 @@ struct State<P> {
 }
 
 struct Candidates {
-    ids: VecDeque<NodeId>,
+    ids: VecDeque<EndpointId>,
     max_size: usize,
 }
 
@@ -1253,7 +1253,7 @@ impl Candidates {
     }
 
     /// Adds a candidate, dedups, and maintains the max size.
-    fn add(&mut self, id: NodeId) {
+    fn add(&mut self, id: EndpointId) {
         self.ids.retain(|x| x != &id);
         self.ids.push_front(id);
         while self.ids.len() > self.max_size {
@@ -1262,7 +1262,7 @@ impl Candidates {
     }
 
     /// Returns the candidates, most recent first, and clears the set
-    fn clear_and_take(&mut self) -> Vec<NodeId> {
+    fn clear_and_take(&mut self) -> Vec<EndpointId> {
         let res = self.ids.iter().cloned().collect();
         self.ids.clear();
         res
@@ -1692,7 +1692,7 @@ where
         }
     }
 
-    fn add_candidate(&mut self, id: NodeId) {
+    fn add_candidate(&mut self, id: EndpointId) {
         if self.state.config.transient {
             warn!("Received FindNode request for transient node");
             return;
@@ -1710,12 +1710,12 @@ where
 }
 
 impl<P: ClientPool> State<P> {
-    async fn lookup(self, initial: Vec<NodeId>, msg: Lookup, tx: oneshot::Sender<Vec<NodeId>>) {
+    async fn lookup(self, initial: Vec<EndpointId>, msg: Lookup, tx: oneshot::Sender<Vec<EndpointId>>) {
         let ids = self.clone().iterative_find_node(msg.id, initial).await;
         tx.send(ids).await.ok();
     }
 
-    async fn network_put(self, initial: Vec<NodeId>, msg: NetworkPut, tx: mpsc::Sender<NodeId>) {
+    async fn network_put(self, initial: Vec<EndpointId>, msg: NetworkPut, tx: mpsc::Sender<EndpointId>) {
         let ids = self.clone().iterative_find_node(msg.id, initial).await;
         stream::iter(ids)
             .for_each_concurrent(self.config.parallelism, |id| {
@@ -1737,9 +1737,9 @@ impl<P: ClientPool> State<P> {
 
     async fn network_get(
         self,
-        initial: Vec<NodeId>,
+        initial: Vec<EndpointId>,
         msg: NetworkGet,
-        tx: mpsc::Sender<(NodeId, Value)>,
+        tx: mpsc::Sender<(EndpointId, Value)>,
     ) {
         let ids = self.clone().iterative_find_node(msg.id, initial).await;
         stream::iter(ids)
@@ -1771,7 +1771,7 @@ impl<P: ClientPool> State<P> {
             .await;
     }
 
-    async fn query_one(&self, id: NodeId, target: Id) -> Result<Vec<NodeId>, &'static str> {
+    async fn query_one(&self, id: EndpointId, target: Id) -> Result<Vec<EndpointId>, &'static str> {
         let requester = if self.config.transient {
             None
         } else {
@@ -1793,14 +1793,14 @@ impl<P: ClientPool> State<P> {
         }
         let infos = infos?;
         drop(client);
-        let ids = infos.iter().map(|info| info.node_id).collect();
+        let ids = infos.iter().map(|info| info.endpoint_id).collect();
         for info in infos {
             self.pool.add_node_addr(info);
         }
         Ok(ids)
     }
 
-    async fn iterative_find_node(self, target: Id, initial: Vec<NodeId>) -> Vec<NodeId> {
+    async fn iterative_find_node(self, target: Id, initial: Vec<EndpointId>) -> Vec<EndpointId> {
         let mut candidates = initial
             .into_iter()
             .filter(|addr| *addr != self.pool.id())
@@ -1923,9 +1923,9 @@ fn now() -> u64 {
 
 /// Creates a DHT node
 pub fn create_node<P: ClientPool>(
-    id: NodeId,
+    id: EndpointId,
     pool: P,
-    bootstrap: Vec<NodeId>,
+    bootstrap: Vec<EndpointId>,
     config: Config,
 ) -> (RpcClient, ApiClient) {
     create_node_impl(id, pool, bootstrap, None, config)
@@ -1933,9 +1933,9 @@ pub fn create_node<P: ClientPool>(
 
 /// Create a node, with the option to set the initial routing table buckets
 fn create_node_impl<P: ClientPool>(
-    id: NodeId,
+    id: EndpointId,
     pool: P,
-    bootstrap: Vec<NodeId>,
+    bootstrap: Vec<EndpointId>,
     buckets: Option<Buckets>,
     config: Config,
 ) -> (RpcClient, ApiClient) {
