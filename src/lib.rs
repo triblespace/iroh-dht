@@ -122,8 +122,8 @@ pub mod rpc {
     /// hashes instead of SHA-1 hashes.
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct Blake3Provider {
-        timestamp: u64, // Unix timestamp for expiry
-        endpoint_id: [u8; 32],
+        pub timestamp: u64,
+        pub endpoint_id: [u8; 32],
     }
 
     /// Small immutable value.
@@ -542,6 +542,74 @@ pub mod api {
                 }
             }
             Ok((hash, res))
+        }
+
+        /// Announce that this node provides the blob with the given blake3 hash.
+        pub async fn announce_provider(
+            &self,
+            hash: blake3::Hash,
+            endpoint_id: EndpointId,
+        ) -> irpc::Result<Vec<EndpointId>> {
+            let id = Id::from(*hash.as_bytes());
+            let mut id_bytes = [0u8; 32];
+            id_bytes.copy_from_slice(endpoint_id.as_bytes());
+            let mut rx = self
+                .0
+                .server_streaming(
+                    NetworkPut {
+                        id,
+                        value: Value::Blake3Provider(super::rpc::Blake3Provider {
+                            timestamp: now(),
+                            endpoint_id: id_bytes,
+                        }),
+                    },
+                    32,
+                )
+                .await?;
+            let mut stored_on = Vec::new();
+            loop {
+                match rx.recv().await {
+                    Ok(Some(id)) => stored_on.push(id),
+                    Ok(None) => break,
+                    Err(_) => break,
+                }
+            }
+            Ok(stored_on)
+        }
+
+        /// Find nodes that provide the blob with the given blake3 hash.
+        pub async fn find_providers(
+            &self,
+            hash: blake3::Hash,
+        ) -> irpc::Result<Vec<EndpointId>> {
+            let id = Id::from(*hash.as_bytes());
+            let mut rx = self
+                .0
+                .server_streaming(
+                    NetworkGet {
+                        id,
+                        kind: Kind::Blake3Provider,
+                        seed: None,
+                        n: None,
+                    },
+                    32,
+                )
+                .await?;
+            let mut providers = Vec::new();
+            loop {
+                match rx.recv().await {
+                    Ok(Some((_from, value))) => {
+                        if let Value::Blake3Provider(super::rpc::Blake3Provider { endpoint_id, .. }) = value {
+                            if let Ok(key) = iroh_base::PublicKey::from_bytes(&endpoint_id) {
+                                providers.push(EndpointId::from(key));
+                            }
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(_) => break,
+                }
+            }
+            Ok(providers)
         }
 
         pub async fn self_lookup(&self) {
@@ -1965,4 +2033,38 @@ fn create_node_impl<P: ClientPool>(
     let (actor, api) = Actor::<P>::new(node, rx, pool, config);
     tokio::spawn(actor.run());
     (RpcClient::new(irpc::Client::local(tx)), api)
+}
+
+// ── ContentDiscovery implementation for iroh-blobs ───────────────────
+
+/// A [`ContentDiscovery`] implementation backed by the iroh DHT.
+///
+/// Wraps an [`ApiClient`] and uses Blake3Provider records to discover
+/// which nodes have a given blob.
+#[derive(Debug, Clone)]
+pub struct DhtContentDiscovery {
+    api: api::ApiClient,
+}
+
+impl DhtContentDiscovery {
+    /// Create a new content discovery backed by the given DHT API client.
+    pub fn new(api: api::ApiClient) -> Self {
+        Self { api }
+    }
+}
+
+impl iroh_blobs::api::downloader::ContentDiscovery for DhtContentDiscovery {
+    fn find_providers(
+        &self,
+        hash: iroh_blobs::HashAndFormat,
+    ) -> n0_future::stream::Boxed<iroh_base::EndpointId> {
+        let api = self.api.clone();
+        let blake3_hash = blake3::Hash::from_bytes(*hash.hash.as_bytes());
+        Box::pin(n0_future::stream::once_future(async move {
+            match api.find_providers(blake3_hash).await {
+                Ok(providers) => n0_future::stream::iter(providers),
+                Err(_) => n0_future::stream::iter(vec![]),
+            }
+        }).flatten())
+    }
 }
