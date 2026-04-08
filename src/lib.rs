@@ -324,6 +324,11 @@ pub mod rpc {
     }
 
     impl RpcClient {
+        /// Get the inner client for use with irpc_iroh::IrohProtocol.
+        pub fn inner(&self) -> &Arc<irpc::Client<RpcProto>> {
+            &self.0
+        }
+
         pub fn remote(endpoint: Endpoint, id: Id) -> std::result::Result<Self, Box<dyn std::error::Error + Send + Sync>> {
             let id = iroh::EndpointId::from_bytes(&id)?;
             let client = irpc_iroh::client(endpoint, id, ALPN);
