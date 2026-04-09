@@ -106,7 +106,7 @@ pub mod rpc {
     };
 
     use iroh::{Endpoint, EndpointAddr, EndpointId, PublicKey};
-    use iroh_base::SignatureError;
+    
     use irpc::{
         channel::{mpsc, oneshot},
         rpc_requests,
