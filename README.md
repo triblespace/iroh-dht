@@ -1,39 +1,47 @@
-# iroh DHT experiment
+# iroh-dht (triblespace fork)
 
-## Tests
+> **This repository is archived.**
+>
+> The code has been integrated into
+> [`triblespace-rs`](https://github.com/triblespace/triblespace-rs)
+> as a private module of the `triblespace-net` crate — see
+> [`triblespace-net/src/dht/mod.rs`](https://github.com/triblespace/triblespace-rs/blob/main/triblespace-net/src/dht/mod.rs).
+> It is no longer released as a separate crate.
 
-Most tests are not really tests but just print out some network stats for you
-to see if the result makes sense. So you need to run them with -- --nocapture
+## Why it moved
 
-### Memory tests
+This fork carried ~300 lines of work ahead of n0's
+[`iroh-dht-experiment`](https://github.com/n0-computer/iroh-dht-experiment):
+API migration to iroh main, a `ContentDiscovery` trait impl for
+iroh-blobs integration, and small cleanups. Triblespace was the only
+consumer, so keeping it as an independent crate meant taking on a
+release + publication line for an experimental DHT that served exactly
+one downstream. Inlining it into `triblespace-net` removes that
+overhead and lets the DHT code evolve at the same cadence as its
+consumer.
 
-- just_bootstrap_1k: network stats with just 20 bootstrap nodes per node perfect_routing_tables_1k
-- perfect_routing_tables_10k: init routing tables with all ids
-- no_routing_1k: shows perfect data distribution
-- self_and_random_lookup_strategy: self and random lookup combined, over time
-- self_lookup_strategy: self lookup strategy
-- random_lookup_strategy: random lookups, over time
-- remove_1k: disconnect 100 of 1000 nodes and see how routing tables change, gif
-- partition_1k: connect 100 of 1000 nodes and see how routing tables change, gif
-- random_vs_blended_1k: compares random vs blended strategy, gif
+If n0 upstreams our API-migration changes to `iroh-dht-experiment` and
+that crate becomes a stable published dependency, `triblespace-net`
+can switch back to a crate-level dep — the integration is
+self-contained enough that re-extraction is a mechanical reverse.
 
-### Iroh tests
+## Where to look
 
-iroh_perfect_routing_tables_500: creates 500 iroh nodes with perfect routing tables and stores some values
+- **Source:** [`triblespace-rs/triblespace-net/src/dht`](https://github.com/triblespace/triblespace-rs/tree/main/triblespace-net/src/dht)
+- **Issues & PRs:** [triblespace-rs/issues](https://github.com/triblespace/triblespace-rs/issues)
+- **Distributed-sync book chapter:** [triblespace book](https://docs.rs/triblespace/)
+
+## History
+
+All commits from this repo (including the six ahead of upstream — API
+migration, `ContentDiscovery` impl, etc.) are preserved in this repo's
+git history. The integration into `triblespace-net` was done as a
+direct copy rather than a subtree merge, so commit-by-commit authorship
+lives here.
 
 ## License
 
-Copyright 2025 N0, INC.
+Copyright 2025 N0, INC. and triblespace contributors
 
-This project is licensed under either of
-
- * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or
-   http://www.apache.org/licenses/LICENSE-2.0)
- * MIT license ([LICENSE-MIT](LICENSE-MIT) or
-   http://opensource.org/licenses/MIT)
-
-at your option.
-
-## Contribution
-
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this project by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+Dual-licensed under [Apache-2.0](LICENSE-APACHE) or
+[MIT](LICENSE-MIT), at your option.
